@@ -55,6 +55,12 @@ def bot_loop():
         if sentiment['is_approved']:
             add_log(f"🔥 HYPE CONFIRMED! ${symbol} is trending on X/Twitter!")
             
+            # Prevent Double Entry on the same token
+            already_holding = any(net['address'] == target_coin['address'] for net in trader.active_nets)
+            if already_holding:
+                add_log(f"⏳ Already holding ${symbol} in active nets. Skipping to avoid double entry.")
+                continue
+            
             # Audit Token Contract for Honeypots
             add_log(f"🛡️ Auditing ${symbol} contract for Honeypot & Rug risks...")
             audit = scanner.check_honeypot(target_coin['address'])

@@ -8,8 +8,8 @@ from .config import DEXSCREENER_API_URL, MIN_LIQUIDITY_USD, MIN_VOL_1H_USD
 class MemecoinScanner:
     def __init__(self):
         self.session = requests.Session()
-        # Simulated search terms for new memecoins
-        self.search_terms = ['pepe', 'doge', 'wif', 'bonk', 'cat', 'moon', 'inu']
+        # Broadening search terms: Solana pools are paired with 'sol', and many new ones are from 'pump' (.fun) or 'raydium'
+        self.search_terms = ['sol', 'pump', 'raydium']
 
     def search_new_pairs(self) -> List[dict]:
         """
