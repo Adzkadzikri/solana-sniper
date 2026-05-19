@@ -49,8 +49,8 @@ def bot_loop():
         symbol = target_coin['symbol']
         add_log(f"👀 Detected New Pool: ${symbol} (Liq: ${target_coin['liquidity']:.0f})")
         
-        # Check Social Hype
-        sentiment = social.evaluate_hype(symbol)
+        # Check Social Hype (Real-time volume and transaction momentum)
+        sentiment = social.evaluate_hype(target_coin)
         
         if sentiment['is_approved']:
             add_log(f"🔥 HYPE CONFIRMED! ${symbol} is trending on X/Twitter!")
@@ -282,13 +282,29 @@ DASHBOARD_HTML = """
                         tradeList.innerHTML = '<div style="color:var(--text-muted); text-align:center; margin-top:50px;">No active nets currently cast.</div>';
                     } else {
                         data.trades.forEach(trade => {
+                            const caShort = trade.address ? `${trade.address.substring(0, 6)}...${trade.address.substring(trade.address.length - 4)}` : 'UNKNOWN';
+                            const dexLink = trade.address ? `https://dexscreener.com/solana/${trade.address}` : '#';
+                            const solscanLink = trade.address ? `https://solscan.io/token/${trade.address}` : '#';
+                            
+                            let statusBadge = `<span class="status-tag">Snipping...</span>`;
+                            if (trade.status === 'MOONBAG_RIDING') {
+                                statusBadge = `<span class="status-tag" style="background-color: rgba(168, 85, 247, 0.1); color: var(--accent-purple);">Moonbag 🚀</span>`;
+                            }
+                            
                             tradeList.innerHTML += `
                                 <div class="trade-item">
                                     <div class="trade-info">
-                                        <span class="trade-symbol">$${trade.symbol}</span>
-                                        <span class="trade-price">Buy: ${trade.buy_price.toFixed(8)}</span>
+                                        <span class="trade-symbol">
+                                            <a href="${dexLink}" target="_blank" style="color: var(--accent); text-decoration: none; font-weight: 700; border-bottom: 1px dashed var(--accent);">
+                                                $${trade.symbol} 📊
+                                            </a>
+                                        </span>
+                                        <span class="trade-price" style="margin-top: 4px;">Buy: $${trade.buy_price.toFixed(8)}</span>
+                                        <span style="font-size: 0.7rem; color: var(--text-muted); font-family: monospace; margin-top: 2px;">
+                                            CA: <a href="${solscanLink}" target="_blank" style="color: var(--text-muted); text-decoration: none; border-bottom: 1px dotted rgba(255,255,255,0.2);">${caShort}</a>
+                                        </span>
                                     </div>
-                                    <span class="status-tag">Snipping...</span>
+                                    ${statusBadge}
                                 </div>
                             `;
                         });

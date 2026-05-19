@@ -49,6 +49,10 @@ class MemecoinScanner:
                 symbol = pair.get('baseToken', {}).get('symbol', 'UNKNOWN')
                 symbol_upper = symbol.upper()
                 
+                # Extract 5-minute transactions and volume for real-time whale/momentum audit
+                buys_5m = pair.get('txns', {}).get('m5', {}).get('buys', 0) or 0
+                volume_5m = pair.get('volume', {}).get('m5', 0) or 0
+                
                 # 3. Apply Sniper Filter (Micro-cap gems only!)
                 # - Min Liquidity: $1,000 (enough to trade without massive slippage)
                 # - Max Liquidity: $100,000 (if higher, it's already too big / listed on CEX!)
@@ -61,6 +65,8 @@ class MemecoinScanner:
                         'price_usd': float(pair.get('priceUsd', 0) or 0),
                         'liquidity': liquidity,
                         'volume_1h': vol_h1,
+                        'buys_5m': buys_5m,
+                        'volume_5m': volume_5m,
                         'dex': pair.get('dexId', 'raydium')
                     })
             

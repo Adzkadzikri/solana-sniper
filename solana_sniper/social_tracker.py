@@ -6,34 +6,35 @@ class SocialSentimentTracker:
     def __init__(self):
         pass
 
-    def evaluate_hype(self, symbol: str) -> dict:
+    def evaluate_hype(self, target: dict) -> dict:
         """
-        In production, this would use the X (Twitter) API to search for 
-        cashtags like $SYMBOL or mentions of the contract address, 
-        plus check on-chain whale wallets.
-        
-        For this simulation, we use a probabilistic model that mimics 
-        the chaotic nature of memecoin social sentiment.
+        Audits the real-time transaction count and volume in the last 5 minutes 
+        to identify whale activity and strong buying momentum.
         """
-        print(f"[🐦 SOCIAL] Analyzing Twitter/Reddit sentiment for ${symbol}...")
+        symbol = target['symbol']
+        buys_5m = target.get('buys_5m', 0)
+        vol_5m = target.get('volume_5m', 0)
         
-        # 80% of coins are dead/no hype. 20% are hyped by influencers/whales.
-        if random.random() > 0.8:
-            hype_score = random.randint(80, 100)
-            whale_activity = "HIGH"
-            influencer_mentions = random.randint(5, 50)
-        else:
-            hype_score = random.randint(0, 50)
-            whale_activity = "LOW"
-            influencer_mentions = 0
-            
-        print(f"   => Hype Score: {hype_score}/100 | Whales: {whale_activity} | Mentions: {influencer_mentions}")
+        print(f"[🐦 SOCIAL] Analyzing real-time Solana on-chain momentum for ${symbol}...")
         
-        is_approved = hype_score >= REQUIRED_SOCIAL_HYPE and whale_activity == "HIGH"
+        # Dynamic momentum scoring:
+        # - Each buy transaction in 5m gives +2 points (up to 60 points)
+        # - Each $100 of 5m volume gives +5 points (up to 40 points)
+        txn_score = min(buys_5m * 2, 60)
+        vol_score = min((vol_5m / 100) * 5, 40)
+        
+        hype_score = int(txn_score + vol_score)
+        
+        # Whales: HIGH if volume in 5 mins is over $1,500 OR buy txns > 20
+        whale_activity = "HIGH" if (vol_5m >= 1500 or buys_5m >= 20) else "LOW"
+        
+        print(f"   => Real Trade Score: {hype_score}/100 | 5M Buys: {buys_5m} | 5M Volume: ${vol_5m:.2f} | Whales: {whale_activity}")
+        
+        # Approved if hype score passes threshold
+        is_approved = hype_score >= REQUIRED_SOCIAL_HYPE or whale_activity == "HIGH"
         
         return {
             'hype_score': hype_score,
             'whale_activity': whale_activity,
-            'influencer_mentions': influencer_mentions,
             'is_approved': is_approved
         }
