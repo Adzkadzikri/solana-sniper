@@ -64,6 +64,8 @@ class MemecoinScanner:
                         'dex': pair.get('dexId', 'raydium')
                     })
             
+            # Shuffle valid targets so we don't always pick the same top token every loop
+            random.shuffle(valid_targets)
             return valid_targets
             
         except Exception as e:
