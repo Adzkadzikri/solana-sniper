@@ -347,5 +347,7 @@ if __name__ == '__main__':
     t.daemon = True
     t.start()
     
-    # Start web app (Port 8080 or Render default)
-    app.run(host='0.0.0.0', port=8080)
+    # Start web app (Dynamic port for Hugging Face/Render support)
+    import os
+    port = int(os.environ.get('PORT', 7860))
+    app.run(host='0.0.0.0', port=port)
