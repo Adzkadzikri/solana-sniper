@@ -54,6 +54,15 @@ def bot_loop():
         
         if sentiment['is_approved']:
             add_log(f"🔥 HYPE CONFIRMED! ${symbol} is trending on X/Twitter!")
+            
+            # Audit Token Contract for Honeypots
+            add_log(f"🛡️ Auditing ${symbol} contract for Honeypot & Rug risks...")
+            audit = scanner.check_honeypot(target_coin['address'])
+            if not audit['is_safe']:
+                add_log(f"🚨 [AUDIT REJECTED] ${symbol} failed safety check: {audit['reason']}")
+                continue
+                
+            add_log(f"✅ [AUDIT PASSED] {audit['reason']}")
             success = trader.execute_buy(target_coin)
             if success:
                 nets_thrown += 1
