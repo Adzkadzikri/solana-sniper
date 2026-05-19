@@ -27,6 +27,14 @@ class MemecoinScanner:
             pairs = data.get('pairs', [])
             
             valid_targets = []
+            
+            # Blacklist for coins already listed on CEXs or major stablecoins/assets
+            CEX_BLACKLIST = [
+                'SOL', 'USDC', 'USDT', 'BTC', 'ETH', 'WSOL', 'DOGE', 'SHIB', 
+                'PEPE', 'BONK', 'WIF', 'FLOKI', 'BOME', 'MEW', 'JUP', 'PYTH', 
+                'POPCAT', 'WNYM', 'JTO', 'RENDER', 'HNT', 'MOBILE', 'W'
+            ]
+            
             for pair in pairs:
                 # 1. Must be on Solana
                 if pair.get('chainId') != 'solana':
@@ -38,11 +46,16 @@ class MemecoinScanner:
                 vol_h1 = pair.get('volume', {}).get('h1', 0)
                 if vol_h1 is None: vol_h1 = 0
                 
-                # 3. Apply Sniper Filter (Real Paper Trading Filter)
-                # Lowered the filter slightly so we actually find pairs in testing
-                if liquidity >= 1000 and vol_h1 >= 1000:
+                symbol = pair.get('baseToken', {}).get('symbol', 'UNKNOWN')
+                symbol_upper = symbol.upper()
+                
+                # 3. Apply Sniper Filter (Micro-cap gems only!)
+                # - Min Liquidity: $1,000 (enough to trade without massive slippage)
+                # - Max Liquidity: $100,000 (if higher, it's already too big / listed on CEX!)
+                # - Not in major CEX/Stablecoin blacklist
+                if 1000 <= liquidity <= 100000 and vol_h1 >= 1000 and symbol_upper not in CEX_BLACKLIST:
                     valid_targets.append({
-                        'symbol': pair.get('baseToken', {}).get('symbol', 'UNKNOWN'),
+                        'symbol': symbol,
                         'address': pair.get('baseToken', {}).get('address', ''),
                         'pairAddress': pair.get('pairAddress', ''),
                         'price_usd': float(pair.get('priceUsd', 0) or 0),
