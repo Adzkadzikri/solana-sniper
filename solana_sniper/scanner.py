@@ -78,6 +78,63 @@ class MemecoinScanner:
             print(f"[❌ SCANNER] Error fetching data from DexScreener: {e}")
             return []
 
+    def search_specific_pairs(self, token_addresses: List[str]) -> List[dict]:
+        """
+        Fetches pairs specifically for the provided target CAs.
+        """
+        if not token_addresses:
+            return []
+            
+        print(f"[🔍 SCANNER] Targeted Snipe Mode: Fetching {len(token_addresses)} specific CAs...")
+        valid_targets = []
+        
+        try:
+            # DexScreener allows querying multiple addresses separated by commas (up to 30)
+            addresses_str = ",".join(token_addresses)
+            url = f"https://api.dexscreener.com/latest/dex/tokens/{addresses_str}"
+            response = self.session.get(url, timeout=5)
+            data = response.json()
+            pairs = data.get('pairs', [])
+            
+            # Dictionary to ensure we only get the best pair per token
+            best_pairs_map = {}
+            
+            for pair in pairs:
+                if pair.get('chainId') != 'solana':
+                    continue
+                    
+                address = pair.get('baseToken', {}).get('address', '')
+                liquidity = pair.get('liquidity', {}).get('usd', 0) or 0
+                
+                # Keep the pair with the highest liquidity for each token address
+                if address not in best_pairs_map or liquidity > best_pairs_map[address].get('liquidity', 0):
+                    best_pairs_map[address] = pair
+            
+            # Format the valid targets
+            for address, pair in best_pairs_map.items():
+                liquidity = pair.get('liquidity', {}).get('usd', 0) or 0
+                vol_h1 = pair.get('volume', {}).get('h1', 0) or 0
+                buys_5m = pair.get('txns', {}).get('m5', {}).get('buys', 0) or 0
+                volume_5m = pair.get('volume', {}).get('m5', 0) or 0
+                symbol = pair.get('baseToken', {}).get('symbol', 'UNKNOWN')
+                
+                valid_targets.append({
+                    'symbol': symbol,
+                    'address': address,
+                    'pairAddress': pair.get('pairAddress', ''),
+                    'price_usd': float(pair.get('priceUsd', 0) or 0),
+                    'liquidity': liquidity,
+                    'volume_1h': vol_h1,
+                    'buys_5m': buys_5m,
+                    'volume_5m': volume_5m,
+                    'dex': pair.get('dexId', 'raydium')
+                })
+                
+            return valid_targets
+        except Exception as e:
+            print(f"[❌ SCANNER] Error fetching targeted CAs from DexScreener: {e}")
+            return []
+
     def get_token_price(self, token_address: str) -> float:
         """Fetch the LIVE current price of a token from DexScreener"""
         try:
@@ -120,22 +177,39 @@ class MemecoinScanner:
                 if mint is not None:
                     return {'is_safe': False, 'reason': 'Mint Authority ACTIVE (Infinite Print)'}
                 
-                # 3. Specific dangerous risks list
+                # 3. Specific dangerous risks list (RugCheck actually flags top holders and LP locks here)
                 risks = report.get('risks', [])
                 for risk in risks:
                     name = risk.get('name', '').lower()
+                    level = risk.get('level', '').lower()
+                    description = risk.get('description', '').lower()
+                    
                     if 'freeze' in name:
                         return {'is_safe': False, 'reason': 'Freeze risk detected'}
                     if 'mint' in name:
                         return {'is_safe': False, 'reason': 'Mint risk detected'}
                     if 'rugged' in name or 'honeypot' in name:
                         return {'is_safe': False, 'reason': 'Flagged as Honeypot/Rug'}
+                    
+                    # Anti-Rugpull Checks (Top holders & Liquidity)
+                    if level == 'danger':
+                        if 'top' in name and 'holders' in name:
+                            return {'is_safe': False, 'reason': f'High Risk: {risk.get("name")} (Whale Dump Potential)'}
+                        if 'liquidity' in name or 'unlocked' in name:
+                            return {'is_safe': False, 'reason': f'High Risk: {risk.get("name")} (LP not fully locked)'}
+                            
+                # 4. Manual Top Holders Check (Just in case)
+                top_holders = report.get('topHolders', [])
+                top_10_pct = sum(h.get('pct', 0) for h in top_holders[:10])
+                if top_10_pct > 0.50:
+                    return {'is_safe': False, 'reason': f'Top 10 holds {top_10_pct*100:.1f}% of supply (Rugpull Risk)'}
+                    
             elif response.status_code == 404:
-                return {'is_safe': True, 'reason': 'Too new for RugCheck (Proceeding with caution)'}
+                return {'is_safe': False, 'reason': 'Too new for RugCheck (Skipping for safety)'}
         except Exception as e:
-            return {'is_safe': True, 'reason': f'Audit timeout ({str(e)}) - Assuming safe'}
+            return {'is_safe': False, 'reason': f'Audit API failed ({str(e)}) - Skipping for safety'}
             
-        return {'is_safe': True, 'reason': 'RugCheck Audited: 100% Safe (No Freeze or Mint authority)'}
+        return {'is_safe': True, 'reason': 'RugCheck Audited: 100% Safe (LP Locked, No Freeze/Mint)'}
 
     def mock_generate_random_new_coin(self) -> dict:
         """Fallback for testing if API fails or we want to simulate a brand new launch."""

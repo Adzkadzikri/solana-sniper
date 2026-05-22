@@ -4,12 +4,14 @@ import random
 from solana.rpc.api import Client
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
-from .config import SOLANA_RPC_URL, PHANTOM_PRIVATE_KEY, TRADE_SIZE
+from .config import SOLANA_RPC_URL, PHANTOM_PRIVATE_KEY, TRADE_SIZE, TRADING_FEE_PCT, JITO_TIP_SOL
 
 class SolanaTrader:
-    def __init__(self):
+    def __init__(self, database, telegram):
         print(f"[🔌 TRADER] Connecting to Solana RPC: {SOLANA_RPC_URL}")
         self.client = Client(SOLANA_RPC_URL)
+        self.db = database
+        self.telegram = telegram
         
         # Test connection
         try:
@@ -21,18 +23,22 @@ class SolanaTrader:
         except Exception as e:
             print(f"[🔌 TRADER] RPC Warning (Expected in simulation): {e}")
 
-        # In production, we'd load the real keypair from base58
-        # self.keypair = Keypair.from_base58_string(PHANTOM_PRIVATE_KEY)
         print("[💼 WALLET] Phantom wallet initialized (Simulation Mode)")
-        self.capital = 40.0
-        self.active_nets = [] # The $1 'nets' we have thrown
+        
+        # Load state from Database
+        active, past, hist, cap = self.db.load_state()
+        self.capital = cap
+        self.active_nets = active
+        self.past_nets = past
+        self.capital_history = hist
+        
+        if not self.capital_history:
+            self.capital_history.append([time.time() * 1000, self.capital])
+            self.db.add_capital_history(self.capital_history[-1][0], self.capital)
+            
+        print(f"[💾 DATABASE] Loaded {len(self.active_nets)} active nets and {len(self.past_nets)} past nets. Capital: ${self.capital:.2f}")
 
     def execute_buy(self, target: dict):
-        """
-        Executes a swap instruction on Raydium/Pump.fun program.
-        Since we don't want to accidentally drain real money in this test,
-        this simulates the transaction confirmation.
-        """
         if self.capital < TRADE_SIZE:
             print("[⚠️ TRADER] Insufficient capital to throw another net!")
             return False
@@ -40,71 +46,174 @@ class SolanaTrader:
         symbol = target['symbol']
         print(f"\n[🚀 EXECUTION] Throwing $1 Net at ${symbol}...")
         
-        # Simulate Solana network confirmation delay (400ms - 2000ms)
+        # Simulate Jito Block Engine Bundle
+        print(f"   [⚡ JITO MEV] Sending bundled transaction with {JITO_TIP_SOL} SOL tip to validators...")
+        
         time.sleep(random.uniform(0.4, 2.0))
         
         self.capital -= TRADE_SIZE
+        actual_invested = TRADE_SIZE * (1 - TRADING_FEE_PCT)
         buy_price = target['price_usd']
         
-        print(f"[✅ SUCCESS] Bought ${symbol} at {buy_price:.8f} (TxHash: 4x...{random.randint(1000,9999)})")
-        print(f"[💰 WALLET] Remaining Capital: ${self.capital:.2f}")
+        # Update state & DB
+        now_ts = time.time() * 1000
+        self.capital_history.append([now_ts, self.capital])
+        self.db.add_capital_history(now_ts, self.capital)
         
-        self.active_nets.append({
+        print(f"[✅ SUCCESS] Bought ${symbol} at {buy_price:.8f} (TxHash: 4x...{random.randint(1000,9999)})")
+        
+        new_net = {
             'symbol': symbol,
             'address': target['address'],
             'buy_price': buy_price,
-            'invested': TRADE_SIZE,
-            'secured_capital': False,
-            'status': 'HOLDING_FOR_2X'
-        })
+            'invested': actual_invested,
+            'original_invested': actual_invested,
+            'ath_price': buy_price,
+            'tp1_done': False,
+            'tp2_done': False,
+            'tp3_done': False,
+            'tp4_done': False,
+            'status': 'HOLDING'
+        }
+        self.active_nets.append(new_net)
+        self.db.save_active_nets(self.active_nets)
+        
+        # Send Telegram Alert
+        self.telegram.alert_buy(symbol, target['address'], buy_price, actual_invested)
         
         return True
 
     def check_portfolio_status(self, scanner):
-        """
-        Checks real live prices of our paper-traded tokens via DexScreener.
-        Implements the Moonbag Strategy (Partial TP at 2x, SL at -90%).
-        """
         print(f"\n[📊 PORTFOLIO] Checking the live paper nets ({len(self.active_nets)} active)...")
+        
+        changed = False
         
         for net in list(self.active_nets):
             current_price = scanner.get_token_price(net['address'])
             if current_price == 0:
-                continue # Price not found right now
+                continue
                 
             multiplier = current_price / net['buy_price']
             current_value = net['invested'] * multiplier
-            
-            # 1. Stop Loss (SL) at -90% of buy price
+
+            # Update ATH
+            if current_price > net['ath_price']:
+                net['ath_price'] = current_price
+                changed = True
+
+            ath_multiplier = net['ath_price'] / net['buy_price']
+            drawdown_from_ath = (current_price / net['ath_price']) if net['ath_price'] > 0 else 1.0
+
+            # Stop Loss
             if multiplier < 0.10:
-                print(f"   [💀 RUGPULL] ${net['symbol']} dropped 90%. Cashed out sisa value: ${current_value:.2f}.")
-                self.capital += current_value
+                net_sell_val = current_value * (1 - TRADING_FEE_PCT)
+                print(f"   [💀 RUGPULL] ${net['symbol']} dropped 90% from buy. Cashed out sisa: ${net_sell_val:.2f}.")
+                self.capital += net_sell_val
+                now_ts = time.time() * 1000
+                self.capital_history.append([now_ts, self.capital])
+                self.db.add_capital_history(now_ts, self.capital)
+                
+                net['status'] = 'RUGPULL_SOLD'
+                self.past_nets.append(net)
                 self.active_nets.remove(net)
+                self.db.save_past_net(net)
+                self.telegram.alert_panic(net['symbol'], net_sell_val, "RUGPULL STOP LOSS")
+                changed = True
+                continue
+
+            # ATH Guard
+            if ath_multiplier >= 2.0 and drawdown_from_ath <= 0.60:
+                net_sell_val = current_value * (1 - TRADING_FEE_PCT)
+                print(f"   [🚨 ATH GUARD] ${net['symbol']} peaked at {ath_multiplier:.1f}x but crashed -40% from peak! Panic sell sisa: ${net_sell_val:.2f}.")
+                self.capital += net_sell_val
+                now_ts = time.time() * 1000
+                self.capital_history.append([now_ts, self.capital])
+                self.db.add_capital_history(now_ts, self.capital)
                 
-            # 2. Take Profit 1 (TP1) - Secured Capital at 2x
-            elif multiplier >= 2.0 and not net.get('secured_capital', False):
-                # Sell 50% of the position to secure the initial $1 investment
-                sell_val = 0.5 * net['invested'] * multiplier
-                self.capital += sell_val
-                
-                # Update net state (cut remaining holding size in half, mark as secured)
-                net['invested'] = net['invested'] * 0.5
-                net['secured_capital'] = True
-                net['status'] = 'MOONBAG_RIDING'
-                
-                print(f"   [🛡️ CAPITAL SECURED] ${net['symbol']} went {multiplier:.1f}x! Sold 50% for ${sell_val:.2f} (Modal Aman!). Sisa 50% dibiarkan terbang.")
-                
-            # 3. Take Profit 2 (Jackpot TP) - Reached 1000x or more on the Moonbag
-            elif net.get('secured_capital', False) and multiplier >= 1000.0:
-                print(f"\n   [🎆 JACKPOT!!!] ${net['symbol']} MOONBAG REACHED {multiplier:.0f}x!!!")
-                self.capital += current_value
+                net['status'] = 'ATH_GUARD_SOLD'
+                self.past_nets.append(net)
                 self.active_nets.remove(net)
+                self.db.save_past_net(net)
+                self.telegram.alert_panic(net['symbol'], net_sell_val, "ATH GUARD PANIC SELL")
+                changed = True
+                continue
+
+            # TP4
+            if not net['tp4_done'] and multiplier >= 100.0:
+                net_sell_val = current_value * (1 - TRADING_FEE_PCT)
+                print(f"\n   [🎆 TP4 MOONSHOT!!!] ${net['symbol']} hit {multiplier:.1f}x! Selling ALL remaining for ${net_sell_val:.2f}! 🚀🌙")
+                self.capital += net_sell_val
+                now_ts = time.time() * 1000
+                self.capital_history.append([now_ts, self.capital])
+                self.db.add_capital_history(now_ts, self.capital)
                 
-            else:
-                # Still holding or riding
-                if net.get('secured_capital', False):
-                    print(f"   [⏳ MOONBAG] ${net['symbol']} | Buy: {net['buy_price']:.8f} | Now: {current_price:.8f} | Moonbag Value: ${current_value:.2f}")
-                else:
-                    print(f"   [⏳ HOLDING] ${net['symbol']} | Buy: {net['buy_price']:.8f} | Now: {current_price:.8f} | Value: ${current_value:.2f}")
+                net['tp4_done'] = True
+                net['invested'] = 0
+                net['status'] = 'TP4_MOONSHOT_SOLD'
+                self.past_nets.append(net)
+                self.active_nets.remove(net)
+                self.db.save_past_net(net)
+                self.telegram.alert_tp("TP4 (100x Moonshot!)", multiplier, net['symbol'], net_sell_val)
+                changed = True
+                continue
+
+            # TP3
+            if not net['tp3_done'] and multiplier >= 20.0:
+                portion_value = 0.25 * current_value
+                net_sell_val = portion_value * (1 - TRADING_FEE_PCT)
+                self.capital += net_sell_val
+                now_ts = time.time() * 1000
+                self.capital_history.append([now_ts, self.capital])
+                self.db.add_capital_history(now_ts, self.capital)
+                
+                net['invested'] *= 0.75
+                net['tp3_done'] = True
+                net['status'] = 'RIDING_TO_100X'
+                self.telegram.alert_tp("TP3 (20x)", multiplier, net['symbol'], net_sell_val)
+                changed = True
+
+            # TP2
+            if not net['tp2_done'] and multiplier >= 5.0:
+                portion_value = 0.25 * current_value
+                net_sell_val = portion_value * (1 - TRADING_FEE_PCT)
+                self.capital += net_sell_val
+                now_ts = time.time() * 1000
+                self.capital_history.append([now_ts, self.capital])
+                self.db.add_capital_history(now_ts, self.capital)
+                
+                net['invested'] *= 0.75
+                net['tp2_done'] = True
+                if not net['tp3_done']:
+                    net['status'] = 'RIDING_TO_20X'
+                self.telegram.alert_tp("TP2 (5x)", multiplier, net['symbol'], net_sell_val)
+                changed = True
+
+            # TP1
+            if not net['tp1_done'] and multiplier >= 2.0:
+                portion_value = 0.25 * current_value
+                net_sell_val = portion_value * (1 - TRADING_FEE_PCT)
+                self.capital += net_sell_val
+                now_ts = time.time() * 1000
+                self.capital_history.append([now_ts, self.capital])
+                self.db.add_capital_history(now_ts, self.capital)
+                
+                net['invested'] *= 0.75
+                net['tp1_done'] = True
+                if not net['tp2_done']:
+                    net['status'] = 'RIDING_TO_5X'
+                self.telegram.alert_tp("TP1 (2x)", multiplier, net['symbol'], net_sell_val)
+                changed = True
+
+            if net in self.active_nets:
+                status_icon = {
+                    'HOLDING': '⏳',
+                    'RIDING_TO_5X': '🚀',
+                    'RIDING_TO_20X': '🔥',
+                    'RIDING_TO_100X': '🌙',
+                }.get(net['status'], '⏳')
+                print(f"   [{status_icon} {net['status']}] ${net['symbol']} | {multiplier:.2f}x | Value: ${current_value:.2f}")
+
+        if changed:
+            self.db.save_active_nets(self.active_nets)
                 
         print(f"[💰 WALLET] Total Capital Now: ${self.capital:,.2f}")
