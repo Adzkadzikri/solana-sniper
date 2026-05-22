@@ -6,8 +6,6 @@ import os
 # ============================================
 INITIAL_CAPITAL = 100.0
 TRADE_SIZE = 1.0          # $1 per trade. $100 means we cast 100 nets!
-MAX_TRADES_PER_DAY = 10   # Don't spend it all at once
-
 # ============================================
 # SOLANA SNIPER 3.0 SETTINGS
 # ============================================
@@ -15,7 +13,7 @@ MAX_TRADES_PER_DAY = 10   # Don't spend it all at once
 # 'SCANNER' = Broad scan for any new memecoin (REST API)
 # 'MEMPOOL_STREAM' = Simulate fast WebSocket Mempool stream
 # 'COPY_TRADE' = Track whales in TARGET_WALLETS
-SNIPER_MODE = os.getenv('SNIPER_MODE', 'TARGETED')
+SNIPER_MODE = os.getenv('SNIPER_MODE', 'MEMPOOL_STREAM')
 
 # List of specific Contract Addresses to snipe
 TARGET_CONTRACT_ADDRESSES = [
