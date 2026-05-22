@@ -41,7 +41,8 @@ def bot_loop():
     wallet_tracker = WalletTracker(TARGET_WALLETS)
     
     add_log(f"🤖 BOT STARTED - Mode: {SNIPER_MODE}")
-    telegram.send_alert(f"🤖 <b>Solana Sniper 3.0 Started</b>\nMode: <code>{SNIPER_MODE}</code>\nCapital: ${trader.capital:.2f}")
+    telegram.link_trader(trader, nets_thrown)
+    telegram.send_alert(f"🤖 <b>Solana Sniper 3.0 Started</b>\nMode: <code>{SNIPER_MODE}</code>\nCapital: ${trader.capital:.2f}\n\nKetik /help untuk daftar perintah 📱")
     
     # Sync state from DB via Trader
     capital = trader.capital
@@ -55,6 +56,9 @@ def bot_loop():
         time.sleep(delay)
         
         targets = []
+        
+        # Poll Telegram for incoming commands (/status, /wallet, etc.)
+        telegram.poll_commands(nets_thrown)
         
         if SNIPER_MODE == 'TARGETED':
             if not TARGET_CONTRACT_ADDRESSES:
