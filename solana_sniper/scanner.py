@@ -54,10 +54,11 @@ class MemecoinScanner:
                 volume_5m = pair.get('volume', {}).get('m5', 0) or 0
                 
                 # 3. Apply Sniper Filter (Micro-cap gems only!)
-                # - Min Liquidity: $1,000 (enough to trade without massive slippage)
-                # - Max Liquidity: $100,000 (if higher, it's already too big / listed on CEX!)
+                # - Min Liquidity: $500  (lebih loose, tangkap gem super early)
+                # - Max Liquidity: $500,000 (masih micro-cap, belum mainstream)
+                # - Min Volume 1h: $200 (ada aktivitas minimal)
                 # - Not in major CEX/Stablecoin blacklist
-                if 1000 <= liquidity <= 100000 and vol_h1 >= 1000 and symbol_upper not in CEX_BLACKLIST:
+                if 500 <= liquidity <= 500000 and vol_h1 >= 200 and symbol_upper not in CEX_BLACKLIST:
                     valid_targets.append({
                         'symbol': symbol,
                         'address': pair.get('baseToken', {}).get('address', ''),
@@ -205,9 +206,9 @@ class MemecoinScanner:
                     return {'is_safe': False, 'reason': f'Top 10 holds {top_10_pct*100:.1f}% of supply (Rugpull Risk)'}
                     
             elif response.status_code == 404:
-                return {'is_safe': False, 'reason': 'Too new for RugCheck (Skipping for safety)'}
+                return {'is_safe': True, 'reason': 'Too new for RugCheck (Aggressive Entry)'}
         except Exception as e:
-            return {'is_safe': False, 'reason': f'Audit API failed ({str(e)}) - Skipping for safety'}
+            return {'is_safe': True, 'reason': f'Audit API failed ({str(e)}) - Aggressive Entry'}
             
         return {'is_safe': True, 'reason': 'RugCheck Audited: 100% Safe (LP Locked, No Freeze/Mint)'}
 

@@ -182,6 +182,51 @@ class TelegramNotifier:
         )
         self.send_alert(msg, chat_id=chat_id)
 
+    @staticmethod
+    def _format_duration(ms_start, ms_end=None):
+        """Converts millisecond timestamps into a human-readable duration string."""
+        import time as _time
+        if not ms_start:
+            return "?"
+        end = ms_end if ms_end else _time.time() * 1000
+        seconds = int((end - ms_start) / 1000)
+        if seconds < 60:
+            return f"{seconds}s"
+        minutes = seconds // 60
+        if minutes < 60:
+            return f"{minutes}m {seconds % 60}s"
+        hours = minutes // 60
+        if hours < 24:
+            return f"{hours}h {minutes % 60}m"
+        days = hours // 24
+        return f"{days}d {hours % 24}h"
+
+    @staticmethod
+    def _get_status_label(net):
+        """Returns a human-readable label + emoji for a net's status."""
+        status = net.get('status', '')
+        labels = {
+            'RUGPULL_SOLD':     ('💀', 'RUGPULL'),
+            'ATH_GUARD_SOLD':   ('🚨', 'ATH GUARD SELL'),
+            'TP4_MOONSHOT_SOLD':('🎆', 'MOONSHOT 100x'),
+            'HOLDING':          ('⏳', 'HOLDING'),
+            'RIDING_TO_5X':     ('🚀', 'RIDING → 5x'),
+            'RIDING_TO_20X':    ('🔥', 'RIDING → 20x'),
+            'RIDING_TO_100X':   ('🌙', 'MOONBAG → 100x'),
+        }
+        # TP partial sells
+        if status not in labels:
+            if 'TP4' in status:
+                return ('🎆', 'TP4 (100x)')
+            if 'TP3' in status:
+                return ('🔥', 'TP3 (20x)')
+            if 'TP2' in status:
+                return ('💸', 'TP2 (5x)')
+            if 'TP1' in status:
+                return ('🛡️', 'TP1 (2x)')
+            return ('✅', status)
+        return labels[status]
+
     def _cmd_nets(self, chat_id):
         if not self._trader:
             self.send_alert("⏳ Bot belum siap...", chat_id=chat_id)
@@ -189,25 +234,61 @@ class TelegramNotifier:
         t = self._trader
         
         if not t.active_nets:
-            self.send_alert("🕸️ <b>Tidak ada posisi aktif saat ini.</b>\n\nBot sedang menunggu peluang...", chat_id=chat_id)
+            self.send_alert(
+                "🕸️ <b>Active Nets (Holding)</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "<i>No active nets currently cast.\n"
+                "Bot sedang scan peluang...</i>",
+                chat_id=chat_id
+            )
             return
         
-        lines = [f"🕸️ <b>ACTIVE POSITIONS ({len(t.active_nets)})</b>\n{'━' * 24}\n"]
+        import time as _time
+        now_ms = _time.time() * 1000
         
-        status_emoji = {
-            'HOLDING': '⏳', 'RIDING_TO_5X': '🚀',
-            'RIDING_TO_20X': '🔥', 'RIDING_TO_100X': '🌙',
-        }
+        lines = [f"🕸️ <b>Active Nets ({len(t.active_nets)} Holding)</b>\n{'━' * 24}"]
         
         for i, net in enumerate(t.active_nets, 1):
-            emoji = status_emoji.get(net.get('status', ''), '⏳')
-            ca_short = net['address'][:6] + '...' + net['address'][-4:] if len(net.get('address', '')) > 10 else net.get('address', '?')
+            emoji, label = self._get_status_label(net)
+            ca_short = (
+                net['address'][:6] + '...' + net['address'][-4:]
+                if len(net.get('address', '')) > 10 else net.get('address', '?')
+            )
+
+            buy_price  = net.get('buy_price', 0) or 0
+            orig_inv   = net.get('original_invested', net.get('invested', 1)) or 1
+
+            # Current multiplier from ATH price (best-known price)
+            ath_price  = net.get('ath_price', buy_price) or buy_price
+            ath_mult   = (ath_price / buy_price) if buy_price > 0 else 1.0
+
+            # Unrealized P/L % based on current invested value vs original
+            curr_inv   = net.get('invested', orig_inv)
+            pnl_pct    = ((curr_inv / orig_inv) - 1) * 100 if orig_inv > 0 else 0
+            pnl_arrow  = "📈" if pnl_pct >= 0 else "📉"
+            pnl_str    = f"{pnl_arrow} {pnl_pct:+.1f}%"
+
+            # Hold duration
+            buy_ts  = net.get('buy_timestamp')
+            duration = self._format_duration(buy_ts, now_ms)
+
+            # TPs achieved
+            tps_done = sum([
+                net.get('tp1_done', False),
+                net.get('tp2_done', False),
+                net.get('tp3_done', False),
+                net.get('tp4_done', False),
+            ])
+            tp_bar = "✅" * tps_done + "⬜" * (4 - tps_done)
+
             lines.append(
-                f"\n{emoji} <b>#{i} ${net['symbol']}</b>\n"
-                f"   Status: <code>{net.get('status', 'HOLDING')}</code>\n"
-                f"   Buy: ${net['buy_price']:.8f}\n"
-                f"   Invested: ${net.get('invested', 0):.3f}\n"
-                f"   CA: <code>{ca_short}</code>"
+                f"\n{emoji} <b>#{i} ${net['symbol']}</b>  —  <code>{label}</code>\n"
+                f"   ⏱ Hold: <b>{duration}</b>\n"
+                f"   💰 Invested: ${orig_inv:.3f}  →  Remaining: ${curr_inv:.3f}\n"
+                f"   📊 P/L: <b>{pnl_str}</b>   ATH: {ath_mult:.2f}x\n"
+                f"   🎯 TPs: {tp_bar}  ({tps_done}/4 hit)\n"
+                f"   🔑 Buy @ ${buy_price:.8f}\n"
+                f"   📋 CA: <code>{ca_short}</code>"
             )
         
         self.send_alert("\n".join(lines), chat_id=chat_id)
@@ -219,24 +300,62 @@ class TelegramNotifier:
         t = self._trader
         
         if not t.past_nets:
-            self.send_alert("📜 <b>Belum ada riwayat trade.</b>", chat_id=chat_id)
+            self.send_alert("📜 <b>Past Holdings (History)</b>\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n<i>Belum ada riwayat trade.</i>", chat_id=chat_id)
             return
         
-        lines = [f"📜 <b>TRADE HISTORY (Last 10)</b>\n{'━' * 24}\n"]
-        
-        status_emoji = {
-            'RUGPULL_SOLD': '💀', 'ATH_GUARD_SOLD': '🚨',
-            'TP4_MOONSHOT_SOLD': '🎆', 'TP4_SOLD': '🎆',
-        }
-        
-        recent = t.past_nets[-10:]  # Last 10
-        for i, net in enumerate(reversed(recent), 1):
-            emoji = status_emoji.get(net.get('status', ''), '✅')
+        recent = list(reversed(t.past_nets[-10:]))
+        lines = [f"📜 <b>Past Holdings — Last {len(recent)} Trades</b>\n{'━' * 24}"]
+
+        for i, net in enumerate(recent, 1):
+            emoji, label = self._get_status_label(net)
+
+            buy_price  = net.get('buy_price', 0) or 0
+            sell_price = net.get('sell_price', 0) or 0
+            orig_inv   = net.get('original_invested', net.get('invested', 1)) or 1
+
+            # P/L% from sell_price vs buy_price
+            if sell_price > 0 and buy_price > 0:
+                pnl_mult = sell_price / buy_price
+                pnl_pct  = (pnl_mult - 1) * 100
+            else:
+                # Fallback: estimate from invested remaining
+                curr_inv = net.get('invested', 0) or 0
+                pnl_pct  = ((curr_inv / orig_inv) - 1) * 100 if orig_inv > 0 else 0
+                pnl_mult = pnl_pct / 100 + 1
+
+            pnl_arrow  = "📈" if pnl_pct >= 0 else "📉"
+            pnl_str    = f"{pnl_arrow} {pnl_pct:+.1f}% ({pnl_mult:.2f}x)"
+
+            # Hold duration
+            buy_ts  = net.get('buy_timestamp')
+            duration = self._format_duration(buy_ts) if buy_ts else "?"
+
+            # TPs achieved badge
+            tps_done = sum([
+                net.get('tp1_done', False),
+                net.get('tp2_done', False),
+                net.get('tp3_done', False),
+                net.get('tp4_done', False),
+            ])
+            tp_badges = []
+            if net.get('tp1_done'): tp_badges.append("TP1✅")
+            if net.get('tp2_done'): tp_badges.append("TP2✅")
+            if net.get('tp3_done'): tp_badges.append("TP3✅")
+            if net.get('tp4_done'): tp_badges.append("TP4✅")
+            tp_str = "  ".join(tp_badges) if tp_badges else "—"
+
+            buy_line  = f"${buy_price:.8f}"
+            sell_line = f"${sell_price:.8f}" if sell_price > 0 else "N/A"
+
             lines.append(
-                f"\n{emoji} <b>#{i} ${net['symbol']}</b> — <code>{net.get('status', '?')}</code>\n"
-                f"   Buy: ${net['buy_price']:.8f}"
+                f"\n{emoji} <b>#{i} ${net['symbol']}</b>\n"
+                f"   🏷️ Label: <b>{label}</b>\n"
+                f"   ⏱ Hold: {duration}\n"
+                f"   📊 P/L: <b>{pnl_str}</b>\n"
+                f"   🎯 TPs Hit: {tp_str}\n"
+                f"   🔑 Buy: {buy_line}  →  Sell: {sell_line}"
             )
-        
+
         self.send_alert("\n".join(lines), chat_id=chat_id)
 
     def _cmd_profit(self, chat_id):

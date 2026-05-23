@@ -73,7 +73,8 @@ class SolanaTrader:
             'tp2_done': False,
             'tp3_done': False,
             'tp4_done': False,
-            'status': 'HOLDING'
+            'status': 'HOLDING',
+            'buy_timestamp': now_ts,
         }
         self.active_nets.append(new_net)
         self.db.save_active_nets(self.active_nets)
@@ -114,6 +115,7 @@ class SolanaTrader:
                 self.db.add_capital_history(now_ts, self.capital)
                 
                 net['status'] = 'RUGPULL_SOLD'
+                net['sell_price'] = current_price
                 self.past_nets.append(net)
                 self.active_nets.remove(net)
                 self.db.save_past_net(net)
@@ -131,6 +133,7 @@ class SolanaTrader:
                 self.db.add_capital_history(now_ts, self.capital)
                 
                 net['status'] = 'ATH_GUARD_SOLD'
+                net['sell_price'] = current_price
                 self.past_nets.append(net)
                 self.active_nets.remove(net)
                 self.db.save_past_net(net)
@@ -150,6 +153,7 @@ class SolanaTrader:
                 net['tp4_done'] = True
                 net['invested'] = 0
                 net['status'] = 'TP4_MOONSHOT_SOLD'
+                net['sell_price'] = current_price
                 self.past_nets.append(net)
                 self.active_nets.remove(net)
                 self.db.save_past_net(net)

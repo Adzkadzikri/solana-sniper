@@ -55,9 +55,10 @@ DEXSCREENER_API_URL = "https://api.dexscreener.com/latest/dex/search?q="
 # ============================================
 # Sniping Criteria (The 10000x Filter)
 # ============================================
-MIN_LIQUIDITY_USD = 5000       # Must have at least $5k liquidity (prevents 99% rugs)
+MIN_LIQUIDITY_USD = 500        # Floor: $500 — tangkap gem super early
+MAX_LIQUIDITY_USD = 500000     # Ceiling: $500k — masih micro-cap
 MAX_AGE_MINUTES = 60           # Coin must be newer than 1 hour
-MIN_VOL_1H_USD = 10000         # Must have volume (Whales are buying)
+MIN_VOL_1H_USD = 200           # Min volume 1h: $200 — ada aktivitas minimal
 REQUIRED_SOCIAL_HYPE = 75      # Social sentiment score (0-100)
 
 # ============================================
